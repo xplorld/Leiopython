@@ -85,13 +85,22 @@ class LispValue(object):
 		elif self.typ == 'CRASH':
 			return ''
 		return str(self.literal)
+	def __eq__(self, other):
+		if self.typ != other.typ:
+			return False
+		if self.typ in ['QUOTE', 'BOOL', 'NUM', 'STRING', 'LIST']:
+			return self.literal == other.literal
+		elif self.typ == 'LAMBDA':
+			return self is other #labmdas are not comparable unless is the same object
+		else: #NAME, CRASH
+			raise LispRuntimeError
 	def eval(self, env):
 		print "evaling " + str(self) + ", type is " + self.typ
 		if self.typ == 'QUOTE':
 			return self.literal
 		elif self.typ == 'LIST':
 			if not self.literal:
-				return self
+				return NIL_VALUE #there is only one '() object
 			head = self.literal[0].eval(env) #now head should be a LAMBDA
 			params = self.literal[1:] # not evaled
 			return head.literal(params, env)
@@ -103,14 +112,16 @@ class LispValue(object):
 		else: # plain old values
 			return self
 	def bool(self):
-		if self.typ == 'BOOL' and self.literal == False:
-			return FALSE_VALUE
-		return TRUE_VALUE
+		isFalse = self.typ == 'BOOL' and self.literal == False
+		return LispBoolValue(not isFalse)
 
 NIL_VALUE = LispValue(LispValue([], 'LIST'), 'QUOTE')
 CRASH_VALUE = LispValue(None, 'CRASH')
 TRUE_VALUE = LispValue(True, 'BOOL')
 FALSE_VALUE = LispValue(False, 'BOOL')
+
+def LispBoolValue(boo):
+	return TRUE_VALUE if boo else FALSE_VALUE
 
 def parse(tokens):
 	stack = []
@@ -129,7 +140,7 @@ def parse(tokens):
 			elif typ == 'NIL':
 				value = NIL_VALUE
 			elif typ == 'BOOL':
-				value = TRUE_VALUE if token == '#t' else FALSE_VALUE
+				value = LispBoolValue(token == '#t')
 			elif typ == 'NUM':
 				value = LispValue(int(token), typ)
 			else: #NAME, STRING
@@ -176,7 +187,7 @@ def builtin_arithmetic(op):
 def builtin_predicate(op):
 	def f(params, env):
 		value = reduce(op,map(lambda o:o.eval(env).literal, params))
-		return TRUE_VALUE if value else FALSE_VALUE
+		return LispBoolValue(value)
 	return LispValue(f, 'LAMBDA')
 
 
@@ -260,10 +271,46 @@ def builtin_if(params, env):
 		return params[1].eval(env)
 	else:
 		return params[2].eval(env)
+
+# (cond
+#   (predicate_1 clauses_1)
+#   (predicate_2 clauses_2)
+#     ......
+#   (predicate_n clauses_n)
+#   (else        clauses_else))
+
+#else is just #t here.
+#if no good branch to follow, return '()
+def builtin_cond(params, env):
+	for branch in params:
+		pred = branch.literal[0]
+		isElse = pred.typ == 'NAME' and pred.literal == 'else'
+		if isElse or branch.literal[0].eval(env).bool() == TRUE_VALUE:
+			return map(lambda o:o.eval(env), branch.literal[1:])[-1]
+	return NIL_VALUE
+
+# (map procedure list1 list2 ...)
+def builtin_map(params, env):
+	evaled_params = map(lambda o:o.eval(env).literal, params)
+	func = evaled_params[0]
+	lists = evaled_params[1:]
+	map_params = zip(*lists) #transpose, overflowed params ignored, as MIT scheme
+	print map_params
+	value = map(lambda o:func(o, env), map_params)
+	return LispValue(value, 'LIST')
+
 def builtin_not(params, env):
 	assert len(params) == 1
 	value = params[0].eval(env).bool()
-	return FALSE_VALUE if value.literal else TRUE_VALUE
+	return LispBoolValue(not value.literal)
+
+def builtin_eq_q(params, env):
+	assert len(params) == 2
+	return LispBoolValue(params[0].eval(env) is params[1].eval(env))
+
+def builtin_equal_q(params, env):
+	assert len(params) == 2
+	return LispBoolValue(params[0].eval(env) == params[1].eval(env))
 
 builtin_env = {
 	'lambda': LispValue(builtin_lambda, 'LAMBDA'),
@@ -274,7 +321,11 @@ builtin_env = {
 	'define':LispValue(builtin_define, 'LAMBDA'),
 	'let':LispValue(builtin_let, 'LAMBDA'),
 	'if':LispValue(builtin_if, 'LAMBDA'),	
+	'cond':LispValue(builtin_cond, 'LAMBDA'),
+	'map':LispValue(builtin_map, 'LAMBDA'),
 	'not':LispValue(builtin_not, 'LAMBDA'),
+	'eq?':LispValue(builtin_eq_q, 'LAMBDA'), #eqv? is strange. Do not use it.
+	'equal?':LispValue(builtin_equal_q, 'LAMBDA'),
 	'+': builtin_arithmetic(operator.add),
 	'-': builtin_arithmetic(operator.sub),
 	'*': builtin_arithmetic(operator.mul),
@@ -310,7 +361,7 @@ def main():
 	# code = '(define fac (lambda (a) (if (> a 0) (* a (fac (- a 1))) 1))) (fac 3)'
 	# code = '(not #t)'
 	# code = ' (let ((i 1) (j 2)) (+ i j))'
-	code = "a"
+	code = '''(map + '(1 2 3) '(4 5))'''
 	# code = '(= 1 2)'
 	# code = '()'
 	# code = '(cdr \'(\'(* 2 3) (- 8 7)))'
