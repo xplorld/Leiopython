@@ -1,6 +1,6 @@
 # Leiopython
 
-have fun!
+Yet another Scheme Interpreter in Python!
 
 ## Etymology:
 

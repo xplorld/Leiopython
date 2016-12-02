@@ -1,13 +1,13 @@
 import re
 import operator
 
-class LispLexError(Exception):
+class SchemeLexError(Exception):
 	pass
 
-class LispParseError(Exception):
+class SchemeParseError(Exception):
 	pass
 
-class LispRumtimeError(Exception):
+class SchemeRumtimeError(Exception):
 	def __init__(self, message = "unknown runtime error"):
 		self.message = message
 	def __str__(self):
@@ -44,11 +44,11 @@ def lex(source):
 			if token_pair[1] != ' ':
 				yield token_pair
 		else: #token_pair == None
-			raise LispLexError
+			raise SchemeLexError
 
 '''
-ASTCall = ( LispValue* )
-LispValue = ASTCall | NUM | token
+ASTCall = ( SchemeValue* )
+SchemeValue = ASTCall | NUM | token
 '''
 
 #a scope of values.
@@ -70,7 +70,7 @@ class ASTCall(object):
 NUM, BOOL, STRING, NAME, LAMBDA, LIST, QUOTE, CRASH
 CRASH is something not supposed to be evaled. e.g. return of (define )
 '''
-class LispValue(object):
+class SchemeValue(object):
 	def __init__(self, literal, typ):
 		self.typ = typ
 		if typ == 'NUM':
@@ -97,7 +97,7 @@ class LispValue(object):
 		elif self.typ == 'LAMBDA':
 			return self is other #labmdas are not comparable unless is the same object
 		else: #NAME, CRASH
-			raise LispRuntimeError
+			raise SchemeRuntimeError
 	def eval(self, env):
 		# print "evaling " + str(self) + ", type is " + self.typ
 		if self.typ == 'QUOTE':
@@ -112,19 +112,19 @@ class LispValue(object):
 			# print "got " + str(env[self.literal]) + " from " + self.literal
 			return env[self.literal]
 		elif self.typ == 'CRASH':
-			raise LispRumtimeError
+			raise SchemeRumtimeError
 		else: # plain old values
 			return self
 	def bool(self):
 		isFalse = self.typ == 'BOOL' and self.literal == False
-		return LispBoolValue(not isFalse)
+		return SchemeBoolValue(not isFalse)
 
-NIL_VALUE = LispValue(LispValue([], 'LIST'), 'QUOTE')
-CRASH_VALUE = LispValue(None, 'CRASH')
-TRUE_VALUE = LispValue(True, 'BOOL')
-FALSE_VALUE = LispValue(False, 'BOOL')
+NIL_VALUE = SchemeValue(SchemeValue([], 'LIST'), 'QUOTE')
+CRASH_VALUE = SchemeValue(None, 'CRASH')
+TRUE_VALUE = SchemeValue(True, 'BOOL')
+FALSE_VALUE = SchemeValue(False, 'BOOL')
 
-def LispBoolValue(boo):
+def SchemeBoolValue(boo):
 	return TRUE_VALUE if boo else FALSE_VALUE
 
 def parse(tokens):
@@ -137,19 +137,19 @@ def parse(tokens):
 			if typ in ASTCall.parentheses().values(): #) and ]
 				top = stack.pop()
 				assert top.matches(typ)
-				value = LispValue(top.list, 'LIST')
+				value = SchemeValue(top.list, 'LIST')
 			elif typ == 'NIL':
 				value = NIL_VALUE
 			elif typ == 'BOOL':
-				value = LispBoolValue(token == '#t')
+				value = SchemeBoolValue(token == '#t')
 			elif typ == 'NUM':
-				value = LispValue(int(token), typ)
+				value = SchemeValue(int(token), typ)
 			else: #NAME, STRING
-				value = LispValue(token, typ)
+				value = SchemeValue(token, typ)
 
 			if stack and stack[-1].typ == "'":
 				stack.pop()
-				value = LispValue(value, 'QUOTE')
+				value = SchemeValue(value, 'QUOTE')
 
 			if stack:
 				stack[-1].list.append(value)
@@ -169,7 +169,7 @@ class Env(object):
 		if key in self.dict:
 			return self.dict[key]
 		if not self.parent:
-			raise LispRumtimeError("unbounded value "+ str(key))
+			raise SchemeRumtimeError("unbounded value "+ str(key))
 		return self.parent[key]
 	def __getitem__(self, key):
 		return self.get(key)
@@ -186,14 +186,14 @@ def builtin_write_line(params, env):
 def builtin_arithmetic(op):
 	def f(params, env):
 		value = reduce(op,[o.eval(env).literal for o in params])
-		return LispValue(value, 'NUM')	
-	return LispValue(f, 'LAMBDA')
+		return SchemeValue(value, 'NUM')	
+	return SchemeValue(f, 'LAMBDA')
 
 def builtin_predicate(op):
 	def f(params, env):
 		value = reduce(op,[o.eval(env).literal for o in params])
-		return LispBoolValue(value)
-	return LispValue(f, 'LAMBDA')
+		return SchemeBoolValue(value)
+	return SchemeValue(f, 'LAMBDA')
 
 
 # (lambda (arg1 arg2) (+ arg1 arg2 1))
@@ -212,17 +212,17 @@ def builtin_lambda(params, env):
 		for i in range(len(names)):
 			closure.set(names[i], params[i].eval(env))
 		return body.eval(closure)
-	return LispValue(f, 'LAMBDA')
+	return SchemeValue(f, 'LAMBDA')
 
 def builtin_cons(params, env):
 	assert len(params) == 2
 	params = [o.eval(env) for o in params]
-	ls = LispValue([], 'LIST')
+	ls = SchemeValue([], 'LIST')
 	if params[1].typ == 'LIST':
 		ls.literal = [params[0]] + params[1].literal
 	else:
 		ls.literal = params
-	return ls # a LispValue
+	return ls # a SchemeValue
 
 
 def builtin_car(params, env):
@@ -236,7 +236,7 @@ def builtin_cdr(params, env):
 	lst = params[0].eval(env)
 	assert len(lst.literal) > 0
 	tail = lst.literal[1:]
-	return LispValue(tail, 'LIST')
+	return SchemeValue(tail, 'LIST')
 
 #(define somename value)
 #(define (fname args...) (some closure))
@@ -247,13 +247,13 @@ def builtin_define(params, env):
 		value = params[1].eval(env)
 	elif params[0].typ == 'LIST':
 		name = params[0].literal[0].literal
-		value = LispValue([
-			LispValue('lambda', 'NAME'), 
-			LispValue(params[0].literal[1:], 'LIST'), 
+		value = SchemeValue([
+			SchemeValue('lambda', 'NAME'), 
+			SchemeValue(params[0].literal[1:], 'LIST'), 
 			params[1]
 			], 'LIST').eval(env)
 	else:
-		raise LispRumtimeError
+		raise SchemeRumtimeError
 	env.set(name, value)
 	return CRASH_VALUE
 
@@ -278,23 +278,23 @@ def builtin_let(params, env):
 		# -> (letrec (<name> (lambda bindings-name <body>)) bindings-val)
 		name, bindings, body = params
 	else:
-		raise LispRumtimeError
+		raise SchemeRumtimeError
 	names = [bind.literal[0] for bind in bindings.literal]
 	vals = [bind.literal[1] for bind in bindings.literal]
 	# for bind in bindings.literal:
 	# 	assert len(bind.literal) == 2
 	# 	names.append(bind.literal[0])
 	# 	vals.append(bind.literal[1]) #not evaled here: evaled by lambda call
-	rewritten_lambda = LispValue([
-			LispValue('lambda', 'NAME'), 
-			LispValue(names, 'LIST'), 
+	rewritten_lambda = SchemeValue([
+			SchemeValue('lambda', 'NAME'), 
+			SchemeValue(names, 'LIST'), 
 			body
 			], 'LIST').eval(env)
 	if len(params) == 2:
 		closure = env
 	elif len(params) == 3:		
 		closure = Env(env).set(name.literal, rewritten_lambda)
-	caller = LispValue([rewritten_lambda] + vals, 'LIST')
+	caller = SchemeValue([rewritten_lambda] + vals, 'LIST')
 	return caller.eval(closure)	
 
 	# assert len(params) == 2
@@ -360,20 +360,20 @@ def builtin_map(params, env):
 	map_params = zip(*lists) #transpose, overflowed params ignored, as MIT scheme
 	print map_params
 	value = map(lambda o:func(o, env), map_params)
-	return LispValue(value, 'LIST')
+	return SchemeValue(value, 'LIST')
 
 def builtin_not(params, env):
 	assert len(params) == 1
 	value = params[0].eval(env).bool()
-	return LispBoolValue(not value.literal)
+	return SchemeBoolValue(not value.literal)
 
 def builtin_eq_q(params, env):
 	assert len(params) == 2
-	return LispBoolValue(params[0].eval(env) is params[1].eval(env))
+	return SchemeBoolValue(params[0].eval(env) is params[1].eval(env))
 
 def builtin_equal_q(params, env):
 	assert len(params) == 2
-	return LispBoolValue(params[0].eval(env) == params[1].eval(env))
+	return SchemeBoolValue(params[0].eval(env) == params[1].eval(env))
 
 # (keep-matching-items '(1 2 -3 -4 5) positive?)
 def builtin_keep_matching_items(params, env):
@@ -381,7 +381,7 @@ def builtin_keep_matching_items(params, env):
 	lst = params[0].eval(env)
 	func = params[1].eval(env)
 	ret = filter(lambda o:func.literal([o], env) == TRUE_VALUE, lst.literal)
-	return LispValue(ret, 'LIST')
+	return SchemeValue(ret, 'LIST')
 
 # (delete_matching_items '(1 2 -3 -4 5) positive?)
 def builtin_delete_matching_items(params, env):
@@ -389,7 +389,7 @@ def builtin_delete_matching_items(params, env):
 	lst = params[0].eval(env)
 	func = params[1].eval(env)
 	ret = filter(lambda o:func.literal([o], env) == FALSE_VALUE, lst.literal)
-	return LispValue(ret, 'LIST')
+	return SchemeValue(ret, 'LIST')
 
 # (reduce + 0 '(1 2 3 4))
 def builtin_reduce(params, env):
@@ -398,30 +398,30 @@ def builtin_reduce(params, env):
 	base = params[1].eval(env)
 	lst = params[2].eval(env)
 	def reducing_call(base, next):
-		call = LispValue([func, base, next], 'LIST')
+		call = SchemeValue([func, base, next], 'LIST')
 		return call.eval(env)
 	return reduce(reducing_call, lst.literal, base)
 
 builtin_env = {
-	'lambda': LispValue(builtin_lambda, 'LAMBDA'),
-	'write-line': LispValue(builtin_write_line, 'LAMBDA'), #print everything
-	'cons':LispValue(builtin_cons, 'LAMBDA'),
-	'car':LispValue(builtin_car, 'LAMBDA'),
-	'cdr':LispValue(builtin_cdr, 'LAMBDA'),
-	'define':LispValue(builtin_define, 'LAMBDA'),
-	'set!':LispValue(builtin_set_mutating, 'LAMBDA'),
-	'let':LispValue(builtin_let, 'LAMBDA'),
-	'let*':LispValue(builtin_let_star, 'LAMBDA'),
-	'letrec':LispValue(builtin_letrec, 'LAMBDA'),
-	'if':LispValue(builtin_if, 'LAMBDA'),	
-	'cond':LispValue(builtin_cond, 'LAMBDA'),
-	'not':LispValue(builtin_not, 'LAMBDA'),
-	'eq?':LispValue(builtin_eq_q, 'LAMBDA'), #eqv? is strange. Do not use it.
-	'equal?':LispValue(builtin_equal_q, 'LAMBDA'),
-	'map':LispValue(builtin_map, 'LAMBDA'),
-	'keep-matching-items':LispValue(builtin_keep_matching_items, 'LAMBDA'),
-	'delete-matching-items':LispValue(builtin_delete_matching_items, 'LAMBDA'),
-	'reduce':LispValue(builtin_reduce, 'LAMBDA'),
+	'lambda': SchemeValue(builtin_lambda, 'LAMBDA'),
+	'write-line': SchemeValue(builtin_write_line, 'LAMBDA'), #print everything
+	'cons':SchemeValue(builtin_cons, 'LAMBDA'),
+	'car':SchemeValue(builtin_car, 'LAMBDA'),
+	'cdr':SchemeValue(builtin_cdr, 'LAMBDA'),
+	'define':SchemeValue(builtin_define, 'LAMBDA'),
+	'set!':SchemeValue(builtin_set_mutating, 'LAMBDA'),
+	'let':SchemeValue(builtin_let, 'LAMBDA'),
+	'let*':SchemeValue(builtin_let_star, 'LAMBDA'),
+	'letrec':SchemeValue(builtin_letrec, 'LAMBDA'),
+	'if':SchemeValue(builtin_if, 'LAMBDA'),	
+	'cond':SchemeValue(builtin_cond, 'LAMBDA'),
+	'not':SchemeValue(builtin_not, 'LAMBDA'),
+	'eq?':SchemeValue(builtin_eq_q, 'LAMBDA'), #eqv? is strange. Do not use it.
+	'equal?':SchemeValue(builtin_equal_q, 'LAMBDA'),
+	'map':SchemeValue(builtin_map, 'LAMBDA'),
+	'keep-matching-items':SchemeValue(builtin_keep_matching_items, 'LAMBDA'),
+	'delete-matching-items':SchemeValue(builtin_delete_matching_items, 'LAMBDA'),
+	'reduce':SchemeValue(builtin_reduce, 'LAMBDA'),
 	'+': builtin_arithmetic(operator.add),
 	'-': builtin_arithmetic(operator.sub),
 	'*': builtin_arithmetic(operator.mul),
