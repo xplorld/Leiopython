@@ -99,7 +99,7 @@ class SchemeValue(object):
 		else: #NAME, CRASH
 			raise SchemeRuntimeError
 	def eval(self, env):
-		# print "evaling " + str(self) + ", type is " + self.typ
+		print "evaling " + str(self) + ", type is " + self.typ
 		if self.typ == 'QUOTE':
 			return self.literal
 		elif self.typ == 'LIST':
@@ -110,7 +110,7 @@ class SchemeValue(object):
 			return head.literal(params, env)
 		elif self.typ == 'NAME':
 			# print "got " + str(env[self.literal]) + " from " + self.literal
-			return env[self.literal]
+			return env.get(self.literal)
 		elif self.typ == 'CRASH':
 			raise SchemeRumtimeError
 		else: # plain old values
@@ -166,13 +166,13 @@ class Env(object):
 		self.dict[key] = value
 		return self
 	def get(self, key):
-		if key in self.dict:
-			return self.dict[key]
-		if not self.parent:
-			raise SchemeRumtimeError("unbounded value "+ str(key))
-		return self.parent[key]
-	def __getitem__(self, key):
-		return self.get(key)
+		env = self
+		while env:
+			if key in env.dict:
+				return env.dict.get(key)
+			else:
+				env = env.parent
+		raise SchemeRumtimeError("unbounded value "+ str(key))
 	def __contains__(self, key):
 		return key in self.dict or key in self.parent
 
@@ -205,7 +205,7 @@ def builtin_lambda(params, env):
 	body = params[1]
 	#when the lambda is called...
 	# ((some_lambda) 2 3)
-	#params[1:] == (2 3)
+	#params == (2 3)
 	def f(params, env):
 		assert len(names) == len(params)
 		closure = Env(env)
@@ -471,21 +471,19 @@ def main():
 	# code = '(= 1 2)'
 	# code = '()'
 	# code = "(cdr '('(* 2 3) (- 8 7)))"
-	# code = '''
-	# (define (zero? x)
-	#   (= x 0))
-	# (define (incx i)
-	#   (let inc-int ((j i) (s 0))
-	#   	(if (zero? j)
-	#   	    s
-	#   	    (inc-int (- j 1) (+ s j)))))
-	# (incx 1000)
-	# '''
+	code = '''
+  	(define (fact-tail x accum)
+	    (if (= x 0) accum
+	        (fact-tail (- x 1) (* x accum))))
+	(define (fact x)
+	 	(fact-tail x 1))
+	(fact 100)
+	'''
 	# print code
 	# for token, typ in lex(code):
 	# 	print(token, typ)
-	with open("incx.scm") as f:
-		code = f.read()
+	# with open("incx.scm") as f:
+	# 	code = f.read()
 	roots = parse(lex(code))
 	for root in roots:
 		print "value: " + str(eval(root))
