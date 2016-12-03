@@ -1,5 +1,12 @@
+#python 3
 import re
 import operator
+#python docs say 99 percent of the time an explicit for loop is more readable than `reduce`.
+#hmmmm. no.
+from functools import reduce 
+
+LEXER_DEBUG = False
+RUNTIME_DEBUG = False
 
 class SchemeLexError(Exception):
 	pass
@@ -16,17 +23,17 @@ class SchemeRumtimeError(Exception):
 def lex(source):
 	#list of regexes, in order
 	token_res = [
-		(re.compile(r'\s+'), ' '), #space
-		(re.compile(r"'"), "'"),
-		(re.compile(r'\('), '('), 
-		(re.compile(r'\)'), ')'), 
-		(re.compile(r'\['), '['), 
-		(re.compile(r'\]'), ']'), 
-		(re.compile(r'nil'), 'NIL'), 
-		(re.compile(r'#[tf]'), 'BOOL'),
-		(re.compile(r'"([^"])*?"' ), "STRING"), #string require " as quotation; don't allow " in string.
-		(re.compile(r'-?\d+'), "NUM"),
-		(re.compile(r'[^"\'\(\)\s\d\[\]][^"\'\(\)\s\[\]]*'), 'NAME'),  #NAME token don't allow  spaces " ' ( ) [ ], don't allow numbers at head
+		(re.compile(r'(\s+)'), ' '), #space
+		(re.compile(r"(')"), "'"),
+		(re.compile(r'(\()'), '('), 
+		(re.compile(r'(\))'), ')'), 
+		(re.compile(r'(\[)'), '['), 
+		(re.compile(r'(\])'), ']'), 
+		(re.compile(r'(nil)'), 'NIL'), 
+		(re.compile(r'(#[tf])'), 'BOOL'),
+		(re.compile(r'"([^"]*?)"' ), "STRING"), #string require " as quotation; don't allow " in string.
+		(re.compile(r'(-?\d+)'), "NUM"),
+		(re.compile(r'([^"\'\(\)\s\d\[\]][^"\'\(\)\s\[\]]*)'), 'NAME'),  #NAME token don't allow  spaces " ' ( ) [ ], don't allow numbers at head
 	]
 
 	length = len(source)
@@ -36,12 +43,14 @@ def lex(source):
 		for regex, typ in token_res:
 			m = regex.match(source, pos)
 			if m:
-				token = m.group(0)
-				pos += len(token)
+				token = m.group(1)
+				pos += len(m.group(0)) #may discard some chars
 				token_pair = (token, typ) #string, type
 				break
 		if token_pair:
 			if token_pair[1] != ' ':
+				if LEXER_DEBUG:
+					print(token_pair)
 				yield token_pair
 		else: #token_pair == None
 			raise SchemeLexError
@@ -86,6 +95,8 @@ class SchemeValue(object):
 			return '<lambda>'
 		elif self.typ == 'BOOL':
 			return '#t' if self.literal else '#f'
+		elif self.typ == 'STRING':
+			return '"' + self.literal + '"'
 		elif self.typ == 'CRASH':
 			return ''
 		return str(self.literal)
@@ -99,7 +110,8 @@ class SchemeValue(object):
 		else: #NAME, CRASH
 			raise SchemeRuntimeError
 	def eval(self, env):
-		print "evaling " + str(self) + ", type is " + self.typ
+		if RUNTIME_DEBUG:
+			print("evaling " + str(self) + ", type is " + self.typ)
 		if self.typ == 'QUOTE':
 			return self.literal
 		elif self.typ == 'LIST':
@@ -165,16 +177,19 @@ class Env(object):
 	def set(self, key, value):
 		self.dict[key] = value
 		return self
+	def force_set(self, key, value):
+		closure = self.find_closure(key)
+		closure.set(key, value)
 	def get(self, key):
+		return self.find_closure(key).get(key)
+	def find_closure(self, key):
 		env = self
 		while env:
 			if key in env.dict:
-				return env.dict.get(key)
+				return env.dict
 			else:
 				env = env.parent
 		raise SchemeRumtimeError("unbounded value "+ str(key))
-	def __contains__(self, key):
-		return key in self.dict or key in self.parent
 
 def builtin_write_line(params, env):
 	for p in params:
@@ -189,20 +204,22 @@ def builtin_arithmetic(op):
 		return SchemeValue(value, 'NUM')	
 	return SchemeValue(f, 'LAMBDA')
 
-def builtin_predicate(op):
+def builtin_predicate(op, binary = False):
 	def f(params, env):
+		if binary:
+			assert len(params) == 2
 		value = reduce(op,[o.eval(env).literal for o in params])
 		return SchemeBoolValue(value)
 	return SchemeValue(f, 'LAMBDA')
 
 
-# (lambda (arg1 arg2) (+ arg1 arg2 1))
-#return a value such that (v 1) is evaled to 2
+# (lambda (arg1 arg2) (display arg1) (+ arg1 arg2 1))
+#return a LAMBDA value
 def builtin_lambda(params, env):
-	assert len(params) == 2
+	assert len(params) > 1
 	#params[0] is LIST of NAMEs
 	names = [o.literal for o in params[0].literal]
-	body = params[1]
+	body = params[1:]
 	#when the lambda is called...
 	# ((some_lambda) 2 3)
 	#params == (2 3)
@@ -211,7 +228,7 @@ def builtin_lambda(params, env):
 		closure = Env(env)
 		for i in range(len(names)):
 			closure.set(names[i], params[i].eval(env))
-		return body.eval(closure)
+		return [expr.eval(closure) for expr in body][-1]
 	return SchemeValue(f, 'LAMBDA')
 
 def builtin_cons(params, env):
@@ -239,9 +256,9 @@ def builtin_cdr(params, env):
 	return SchemeValue(tail, 'LIST')
 
 #(define somename value)
-#(define (fname args...) (some closure))
+#(define (fname args...) (some closures...))
 def builtin_define(params, env):
-	assert len(params) == 2
+	assert len(params) > 1
 	if params[0].typ == 'NAME':
 		name = params[0].literal
 		value = params[1].eval(env)
@@ -250,7 +267,7 @@ def builtin_define(params, env):
 		value = SchemeValue([
 			SchemeValue('lambda', 'NAME'), 
 			SchemeValue(params[0].literal[1:], 'LIST'), 
-			params[1]
+			*params[1:]
 			], 'LIST').eval(env)
 	else:
 		raise SchemeRumtimeError
@@ -269,16 +286,16 @@ def builtin_set_mutating(params, env):
 
 #values in bindings are evaled before application
 def builtin_let(params, env):
-	if len(params) == 2:
+	assert len(params) > 1
+	if params[0].typ == 'NAME':
+		# (let <name> (bindings) <body>)
+		# -> (letrec (<name> (lambda bindings-name <body>)) bindings-val)	
+		name, bindings, *body = params
+	else:
 		# (let ((i 1) (j 2)) (+ i j))
 		# -> ((lambda (i j) (+ i j)) 1 2)
-		bindings, body = params
-	elif len(params) == 3:		
-		# (let <name> (bindings) <body>)
-		# -> (letrec (<name> (lambda bindings-name <body>)) bindings-val)
-		name, bindings, body = params
-	else:
-		raise SchemeRumtimeError
+		bindings, *body = params
+
 	names = [bind.literal[0] for bind in bindings.literal]
 	vals = [bind.literal[1] for bind in bindings.literal]
 	# for bind in bindings.literal:
@@ -288,12 +305,12 @@ def builtin_let(params, env):
 	rewritten_lambda = SchemeValue([
 			SchemeValue('lambda', 'NAME'), 
 			SchemeValue(names, 'LIST'), 
-			body
+			*body
 			], 'LIST').eval(env)
-	if len(params) == 2:
-		closure = env
-	elif len(params) == 3:		
+	if params[0].typ == 'NAME':
 		closure = Env(env).set(name.literal, rewritten_lambda)
+	else:
+		closure = env
 	caller = SchemeValue([rewritten_lambda] + vals, 'LIST')
 	return caller.eval(closure)	
 
@@ -326,7 +343,6 @@ def builtin_let_star(params, env):
 def builtin_letrec(params, env):
 	return builtin_let(params, env)
 
-
 def builtin_if(params, env):
 	assert len(params) == 3
 	predicate = params[0].eval(env).bool()
@@ -354,11 +370,9 @@ def builtin_cond(params, env):
 
 # (map procedure list1 list2 ...)
 def builtin_map(params, env):
-	evaled_params = map(lambda o:o.eval(env).literal, params)
-	func = evaled_params[0]
-	lists = evaled_params[1:]
+	func = params[0].eval(env).literal
+	lists = map(lambda o:o.eval(env).literal, params[1:])
 	map_params = zip(*lists) #transpose, overflowed params ignored, as MIT scheme
-	print map_params
 	value = map(lambda o:func(o, env), map_params)
 	return SchemeValue(value, 'LIST')
 
@@ -366,14 +380,6 @@ def builtin_not(params, env):
 	assert len(params) == 1
 	value = params[0].eval(env).bool()
 	return SchemeBoolValue(not value.literal)
-
-def builtin_eq_q(params, env):
-	assert len(params) == 2
-	return SchemeBoolValue(params[0].eval(env) is params[1].eval(env))
-
-def builtin_equal_q(params, env):
-	assert len(params) == 2
-	return SchemeBoolValue(params[0].eval(env) == params[1].eval(env))
 
 # (keep-matching-items '(1 2 -3 -4 5) positive?)
 def builtin_keep_matching_items(params, env):
@@ -405,6 +411,7 @@ def builtin_reduce(params, env):
 builtin_env = {
 	'lambda': SchemeValue(builtin_lambda, 'LAMBDA'),
 	'write-line': SchemeValue(builtin_write_line, 'LAMBDA'), #print everything
+	'display': SchemeValue(builtin_write_line, 'LAMBDA'), #print everything
 	'cons':SchemeValue(builtin_cons, 'LAMBDA'),
 	'car':SchemeValue(builtin_car, 'LAMBDA'),
 	'cdr':SchemeValue(builtin_cdr, 'LAMBDA'),
@@ -416,8 +423,8 @@ builtin_env = {
 	'if':SchemeValue(builtin_if, 'LAMBDA'),	
 	'cond':SchemeValue(builtin_cond, 'LAMBDA'),
 	'not':SchemeValue(builtin_not, 'LAMBDA'),
-	'eq?':SchemeValue(builtin_eq_q, 'LAMBDA'), #eqv? is strange. Do not use it.
-	'equal?':SchemeValue(builtin_equal_q, 'LAMBDA'),
+	'eq?':builtin_predicate(operator.is_, binary = True), #eqv? is strange. Do not use it.
+	'equal?':builtin_predicate(operator.eq, binary=True),
 	'map':SchemeValue(builtin_map, 'LAMBDA'),
 	'keep-matching-items':SchemeValue(builtin_keep_matching_items, 'LAMBDA'),
 	'delete-matching-items':SchemeValue(builtin_delete_matching_items, 'LAMBDA'),
@@ -425,7 +432,7 @@ builtin_env = {
 	'+': builtin_arithmetic(operator.add),
 	'-': builtin_arithmetic(operator.sub),
 	'*': builtin_arithmetic(operator.mul),
-	'/': builtin_arithmetic(operator.div),
+	'/': builtin_arithmetic(operator.truediv),
 	'=': builtin_predicate(operator.eq),
 	'<': builtin_predicate(operator.lt),
 	'>': builtin_predicate(operator.gt),
@@ -440,7 +447,6 @@ def eval(root):
 
 '''
 todo:
-lexer: use groups to handle strings, get rid of doublequote in literal
 eval: more built-in functions, 7 axioms
 better error messages
 there are no (1 .2) like lists. all lists are nil terminated
@@ -456,7 +462,7 @@ def main():
 	# code = '(define (addOne x) (+ x 1)) (addOne 2)'
 	# code = '(define fac (lambda (a) (if (> a 0) (* a (fac (- a 1))) 1))) (fac 10)'
 	# code = '(not #t)'
-	# code = ' (let ((i 1) (j 2)) (+ i j))'
+	code = ' (let ((i 1) (j 2)) (+ i j))'
 	# code = '''(map + '(1 2 3) '(4 5))'''
 	# code = "(define (positive? x) [> x 0]) (delete-matching-items '[1 2 -3 -4 5] positive?)"
 	# code = "'a"
@@ -464,29 +470,39 @@ def main():
 	# code = '''
 	# (define (zero? x) (= x 0))
 	# (let my-chosen-name ((n 10) (acc '()))
- #  (if (zero? n)
- #      acc
- #      (my-chosen-name (- n 1) (cons n acc)))) 
+ 	#  (if (zero? n)
+ 	#      acc
+ 	#      (my-chosen-name (- n 1) (cons n acc)))) 
 	# '''
 	# code = '(= 1 2)'
 	# code = '()'
 	# code = "(cdr '('(* 2 3) (- 8 7)))"
-	code = '''
-  	(define (fact-tail x accum)
-	    (if (= x 0) accum
-	        (fact-tail (- x 1) (* x accum))))
-	(define (fact x)
-	 	(fact-tail x 1))
-	(fact 100)
-	'''
-	# print code
-	# for token, typ in lex(code):
-	# 	print(token, typ)
+	# code = '''
+ 	#  	(define (fact-tail x accum)
+	#     (if (= x 0) accum
+	#         (fact-tail (- x 1) (* x accum))))
+	# (define (fact x)
+	#  	(fact-tail x 1))
+	# (fact 100)
+	# '''
+	# code = '''
+	# (let ((x 1))
+	# 	(let ((x 2))
+	# 		(display x)
+	# 		(set! x 10)
+	# 		(display x))
+	# 	(display x)
+	# 	x)
+	# '''
 	# with open("incx.scm") as f:
 	# 	code = f.read()
+	global LEXER_DEBUG
+	global RUNTIME_DEBUG
+	# LEXER_DEBUG = True
+	RUNTIME_DEBUG = True
 	roots = parse(lex(code))
 	for root in roots:
-		print "value: " + str(eval(root))
+		print("value: " + str(eval(root)))
 
 if __name__ == '__main__':
 	main()
