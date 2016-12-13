@@ -220,12 +220,13 @@ def builtin_lambda(params, env):
 	#params[0] is LIST of NAMEs
 	names = [o.literal for o in params[0].literal]
 	body = params[1:]
+	lexical_env = env
 	#when the lambda is called...
 	# ((some_lambda) 2 3)
 	#params == (2 3)
 	def f(params, env):
 		assert len(names) == len(params)
-		closure = Env(env)
+		closure = Env(lexical_env)
 		for i in range(len(names)):
 			closure.set(names[i], params[i].eval(env))
 		return [expr.eval(closure) for expr in body][-1]
@@ -462,7 +463,7 @@ def main():
 	# code = '(define (addOne x) (+ x 1)) (addOne 2)'
 	# code = '(define fac (lambda (a) (if (> a 0) (* a (fac (- a 1))) 1))) (fac 10)'
 	# code = '(not #t)'
-	code = ' (let ((i 1) (j 2)) (+ i j))'
+	# code = ' (let ((i 1) (j 2)) (+ i j))'
 	# code = '''(map + '(1 2 3) '(4 5))'''
 	# code = "(define (positive? x) [> x 0]) (delete-matching-items '[1 2 -3 -4 5] positive?)"
 	# code = "'a"
@@ -494,6 +495,11 @@ def main():
 	# 	(display x)
 	# 	x)
 	# '''
+	code = '''
+	(define x 10)
+	(define (addX y) (+ x y))
+	(let ((x 1)) (addX 2))
+	'''#12 if lexical scoping, 3 if dynamic scoping
 	# with open("incx.scm") as f:
 	# 	code = f.read()
 	global LEXER_DEBUG
